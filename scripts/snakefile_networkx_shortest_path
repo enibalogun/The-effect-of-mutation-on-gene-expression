@@ -1,0 +1,15 @@
+prefix = "/research/projects/chlamydomonas/MAexpression/"
+(NUMBER, SAMPLES) = glob_wildcards(prefix + 'analysis/DEGs/simulated_DEGs/bootstraps/bootstrap_{no}_{sample}.txt')
+        
+rule allout:
+    input:
+        expand(prefix + 'analysis/DEGs/simulated_DEGs/chlamynet_shortest_paths/bootstrap_{no}_{sample}.tsv', sample=SAMPLES, no = NUMBER)
+        
+rule short_path:
+    input:
+        prefix + 'analysis/DEGs/simulated_DEGs/bootstraps/bootstrap_{no}_{sample}.txt'  
+    output:
+        prefix + 'analysis/DEGs/simulated_DEGs/chlamynet_shortest_paths/bootstrap_{no}_{sample}.tsv'
+    threads: 32
+    script:
+        'networkx_shortest_paths.py'

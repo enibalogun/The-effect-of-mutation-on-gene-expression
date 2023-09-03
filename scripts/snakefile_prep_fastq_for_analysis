@@ -1,0 +1,115 @@
+(SAMPLES,R) = glob_wildcards('{sample}_{r}.fastq.gz')
+prefix = "/research/projects/chlamydomonas/MAexpression/"
+ 
+rule genome_index:
+    input: 
+        fasta = '/research/projects/chlamydomonas/MAexpression/data/genome_info/v6_genome_plus_anno/CC4532.w_organelles_MTplus.fa',
+        gtf = '/research/projects/chlamydomonas/MAexpression/data/genome_info/v6_genome_plus_anno/CC4532.v1_1.gene_exons.gtf'
+    output:
+        directory(prefix + '/data/genome_index/genome_index_v6')
+    threads: 8
+    shell:
+        'STAR --runThreadN {threads} --runMode genomeGenerate --genomeDir {output} --genomeFastaFiles {input.fasta} --sjdbGTFfile {input.gtf} --sjdbOverhang 99 --outFilterMismatchNoverLmax 0.2 --outFilterMismatchNmax 20'
+
+rule allout:
+    input:
+        expand(prefix + 'data/bam/{sample}_pass1/SJ.out.tab', sample=SAMPLES),
+        expand(prefix + 'data/bam/{sample}_pass1SJ.filtered.tab', sample=SAMPLES),
+        expand(prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.out.bam', sample=SAMPLES),
+        expand(prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.out.bam.bai', sample=SAMPLES),
+        expand(prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.bam', sample=SAMPLES),
+        expand(prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.bam.bai', sample=SAMPLES),
+        expand(prefix + 'data/gene_count/{sample}_genes_count', sample=SAMPLES),
+        expand(prefix + 'data/qualimap_bam_stats/{sample}_pass2/{sample}_genome_results.txt', sample=SAMPLES),
+        expand(prefix + 'data/qualimap_bam_stats/{sample}_pass2/{sample}_rnaseq_qc_results.txt', sample=SAMPLES),
+        expand(prefix + 'data/qualimap_bam_stats/{sample}_pass2/{sample}_rna_seq.pdf', sample = SAMPLES),
+        expand(prefix + 'data/qualimap_bam_stats/{sample}_pass2/{sample}_bam_qc.pdf', sample = SAMPLES)
+
+rule pass_1:
+    input:
+        R1 = prefix + 'raw_data/{sample}_R1.fastq.gz',
+        R2 = prefix + 'raw_data/{sample}_R2.fastq.gz',
+        ref_dir = '/research/projects/chlamydomonas/MAexpression/data/genome_index/genome_index_v6'
+    params:
+        outdir = prefix + 'data/bam/{sample}_pass1',
+        rmbam = prefix + 'data/bam/{sample}_pass1/Aligned.out.bam',
+        rmsam = prefix + 'data/bam/{sample}_pass1/Aligned.out.sam'
+    output:
+        prefix + 'data/splice_junctions/{sample}_pass1/SJ.out.tab'
+    threads: 8
+    shell:
+        'rm -rf {params.outdir} && mkdir {params.outdir} && cd {params.outdir} && STAR --runMode alignReads --alignIntronMax 5000 --runThreadN {threads} --genomeDir {input.ref_dir} --sjdbOverhang 99 --outFilterMismatchNoverLmax 0.2 --outFilterMismatchNmax 20 --readFilesIn {input.R1} {input.R2} --readFilesCommand zcat --outSAMtype BAM Unsorted && rm -rf {params.rmbam} && rm -rf {params.rmsam} && cd ../'
+
+rule filter:
+    input:
+        prefix + 'data/splice_junctions/{sample}_pass1/SJ.out.tab'
+    output:
+        prefix + 'data/splice_junctions/{sample}_pass1SJ.filtered.tab'
+    threads:8
+    shell:
+        '''awk "{{if (\$7 >= 3) print \$0}}" {input[0]} > {input[0]}.filtered && '''
+        'mv {input[0]}.filtered {output}'
+
+rule pass_2:
+    input:
+        R1 = prefix + 'raw_data/{sample}_R1.fastq.gz',
+        R2 = prefix + 'raw_data/{sample}_R2.fastq.gz',
+        ref_dir = '/research/projects/chlamydomonas/MAexpression/data/genome_index/genome_index_v6',
+        SJfiles = prefix + 'data/splice_junctions/{sample}_pass1SJ.filtered.tab'
+    params:
+        outdir = prefix + 'data/bam/{sample}_pass2',
+        id = '{sample}'
+    output:
+        '{sample}_pass2/Aligned.sortedByCoord.out.bam'
+    threads: 8
+    shell:
+        'cd /research/projects/chlamydomonas/MAexpression/data/bam && rm -rf {params.outdir} && mkdir {params.outdir} && cd {params.outdir} && STAR --runMode alignReads --alignIntronMax 5000 --runThreadN {threads} --genomeDir {input.ref_dir} --sjdbOverhang 99 --outFilterMismatchNoverLmax 0.2 --outFilterMismatchNmax 20 --readFilesIn {input.R1} {input.R2} --readFilesCommand zcat --outSAMtype BAM SortedByCoordinate --sjdbFileChrStartEnd {input.SJfiles} --outSAMattrRGline ID:{params.id} --quantMode GeneCounts && cd /research/projects/chlamydomonas/MAexpression/raw_data'
+
+rule bam_index:
+    input:
+        bam = prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.out.bam'
+    output:
+        prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.out.bam.bai'
+    shell:
+        'samtools index {input.bam}'
+        
+rule addorreplacereadgroups:
+    input:
+        bam = prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.out.bam'
+    output:
+        sorted = prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.bam'
+    shell:
+        'picard AddOrReplaceReadGroups -I {input.bam} -O {output.sorted} -RGID {wildcards.sample} -RGLB lib1 -RGPL Illumina -RGPU unit1 -RGSM {wildcards.sample} --VALIDATION_STRINGENCY LENIENT'
+         
+rule bam_index2:
+    input:
+        bam_1 = prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.bam'
+    output:
+        prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.bam.bai'
+    shell:
+        'samtools index {input.bam_1}'
+
+rule featurecounts:
+    input:
+        prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.bam',
+        gtf = '/research/projects/chlamydomonas/MAexpression/genome_info/v6_genome_plus_anno/CC4532.v1_1_exon_only.gtf'
+    output:
+        '/research/projects/chlamydomonas/MAexpression/data/gene_count/{sample}_genes_count'
+    threads: 16
+    shell:
+        "featureCounts -p -O -T 16 -t transcript -g gene_id -a {input.gtf} -o {output[0]} {input[0]}"
+        
+rule qualimap:
+    input:
+        bam = prefix + 'data/bam/{sample}_pass2/Aligned.sortedByCoord.bam',
+        gtf = '/research/projects/chlamydomonas/MAexpression/genome_info/v6_genome_plus_anno/CC4532.v1_1.gene_exons.gtf'
+    params:
+        outdir = prefix + 'data/qualimap_bam_stats/{sample}_pass2'
+    threads: 8
+    output:
+        prefix + 'data/qualimap_bam_stats/{sample}_pass2/{sample}_genome_results.txt',
+        prefix + 'data/qualimap_bam_stats/{sample}_pass2/{sample}_rnaseq_qc_results.txt',
+        prefix + 'data/qualimap_bam_stats/{sample}_pass2/{sample}_rna_seq.pdf',
+        prefix + 'data/qualimap_bam_stats/{sample}_pass2/{sample}_bam_qc.pdf'
+    shell: 
+        'qualimap bamqc -bam {input.bam} --collect-overlap-pairs --skip-duplicated --skip-dup-mode 1 --feature-file {input.gtf} -outdir {params.outdir} -outfile bam_qc.pdf -c && qualimap rnaseq -bam {input.bam} -gtf {input.gtf} --paired -outdir {params.outdir} -outfile rna_seq.pdf'
