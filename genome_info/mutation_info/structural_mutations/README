@@ -1,0 +1,23 @@
+#first convert tsv of mutations in CC-2931 coordiantes to a bed file
+#add 5 bp flanks for TE insertions and excisions, and translocation breakpoints
+perl tsv2bed.pl
+
+#sort bed file uniquely to remove duplicates
+sort -u anc_muts.bed > s_anc_muts.bed
+
+#liftover from CC-2931 to CC-4532 v6
+halLiftover /localdisk/data/chlamydomonas/cc_2931_pacbio/liftover/cRei-5way.hal CC2931 s_anc_muts.bed CC4532 CC4532_muts.bed
+
+#sort first by mutation, and then by chr and start coordinates
+sort -k4,4 -k1,1 -k2n,2n CC4532_muts.bed > s_CC4532_muts.bed
+
+#merge any liftover blocks that are part of the same mutation and are within 10 bp of each other 
+perl merge_frags.pl
+
+#extract mutations by category
+grep insertion s_CC4532_muts.10bp.bed > insertions.bed
+sort -k4,4 -k1,1 -k2n,2n insertions.bed > s_insertions.bed
+
+#can compare total number vs unique 
+wc -l s_insertions.bed
+awk '{ print $4 }' s_insertions.bed | sort -u | wc -l
